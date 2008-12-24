@@ -1,0 +1,312 @@
+#!/usr/bin/env perl
+
+use Term::Highlight;
+
+( $PROGNAME = $0 ) =~ s/.*\///;
+$VERSION = "1.5";
+$TAGTYPE = "term";
+
+
+sub PrintUsage
+{
+print << "EOHELP"
+$PROGNAME, version $VERSION. See man pages for details.
+
+Usage: $PROGNAME [global-options] [highlight-options [patterns] ...] [- file1 [file2] ...]
+
+Global options affect the behaviour of the program globally:
+    -g (-grep) prints only lines which include patterns.
+    -r greps recursively, implies '-g'.
+       If file list is empty, starts search in current directory.
+    -l prints the list of files where matches were found, implies '-g'.
+    -b (-bin) enables processing of binary files (not enabled by default).
+    -d (-debug) turns on debug support (colors printed out as symbolic sequences).
+    -h (-help) prints this message and exit.
+
+Highlight options apply to the following them patterns:
+    -x[xx][.b] highlights following patterns with color id x[xx], x[xx] is a number
+               within [0..255] range, b is 0 or 1 and stands for background.
+               If b is 0, color id applies to foreground, if it is 1 - to background.
+               Suffix .b may be omitted in which case b is equal to 0.
+    -i sets ignorecase search.
+    -ni unsets ignorecase search.
+    -b sets bold font.
+    -rfg resets foreground color to default value.
+    -rb resets bold font to normal.
+    -rbg resets background color to default value.
+    -r resets both background color and bold font.
+    -ra resets all settings to default values.
+EOHELP
+}
+
+
+
+# MAIN LOOP BEGIN
+
+
+push @Hl_args, split '\s+', $ENV{ HL_INITSTRING } if exists $ENV{ HL_INITSTRING };
+
+while ( my $arg = shift )
+{
+    last if $arg eq '-';
+    SWITCH_ARGS :
+    {
+        last SWITCH_ARGS if $Hl_args;
+        if ( $arg eq "-h" || $arg eq "-help" || $arg eq "--help" || $arg eq "--version" )
+        {
+            PrintUsage; exit 0;
+        }
+        if ( $arg eq "-d" || $arg eq "-debug" || $arg eq "--debug" )
+        {
+            $TAGTYPE = "debug-term";
+        }
+        if ( $arg eq "-g" || $arg eq "-grep" || $arg eq "--grep" )
+        {
+            $Grep = 1; last SWITCH_ARGS;
+        }
+        if ( $arg eq "-r" )
+        {
+            $Grep = 1; $GrepRecursively = 1; last SWITCH_ARGS;
+        }
+        if ( $arg eq "-l" )
+        {
+            $Grep = 1; $GrepList = 1; last SWITCH_ARGS;
+        }
+        if ( $arg eq "-b" || $arg eq "-bin" || $arg eq "--binary" )
+        {
+            $BinarySupport = 1; last SWITCH_ARGS;
+        }
+        $Hl_args = 1;
+    }
+    push @Hl_args, $arg if $Hl_args;
+}
+
+
+#create a new highlight object
+$hl = Term::Highlight->new( tagtype => $TAGTYPE );
+
+#process command line arguments
+$hl->LoadArgs( \@Hl_args );
+
+
+#remove binary files from file list if binary support is not enabled
+@ARGV = grep { -T or -d } @ARGV unless $BinarySupport;
+
+
+#process STDIN or file list line by line
+if ( $GrepRecursively )
+{
+    use File::Find;
+    $File::Find::prune = 1;
+    @ARGV || push @ARGV, './';
+    find sub
+    {
+        my ( $FullFile, $File, $FileIsBinary ) = ( $File::Find::name, $_, -B $_ );
+        return unless -f $File;
+        return if $FileIsBinary && ! $BinarySupport;
+        open FILE, "< $File" or warn $!;
+        binmode( FILE ) if $FileIsBinary;
+        while ( <FILE> )
+        {
+            next if ! $hl->Process( \$_ );
+            print "$FullFile\n" if $GrepList && ! $FileIsBinary;
+            print "Binary file $FullFile matches\n" if $FileIsBinary;
+            last if $GrepList || $FileIsBinary;
+            print "$FullFile: $_";
+        }
+        close FILE;
+    }, @ARGV
+}
+else
+{
+    @ARGV || push @ARGV, *STDIN;
+    my $print_filename = @ARGV > 1;
+    for my $File( @ARGV )
+    {
+        my ( $FileHandle, $FileIsBinary );
+        if ( $File eq *STDIN )
+        {
+            $FileHandle = *STDIN;
+        }
+        else
+        {
+            unless ( open $FileHandle, "< $File" )
+            {
+                warn( "Unable to open $File: $!" );
+                next;
+            }
+            if ( -d $FileHandle )
+            {
+                warn( "$File is a directory, ignored" );
+                next;
+            }
+            $FileIsBinary = -B $FileHandle;
+        }
+        binmode( $FileHandle ) if $FileIsBinary;
+        while ( <$FileHandle> )
+        {
+            next if ! $hl->Process( \$_ ) && $Grep;
+            #debug purpose
+            #print "$_->[ 0 ], $_->[ 1 ], $_->[ 2 ], $_->[ 3 ], @${ $_->[ 4 ] }\n" foreach $hl->Process( \$_ );
+            print "$File\n" if $GrepList && ! $FileIsBinary;
+            print "Binary file $File matches\n" if $FileIsBinary;
+            last if $GrepList || $FileIsBinary;
+            #print current line
+            my $header = "$File: " if $print_filename;
+            print $header, $_;
+        }
+        close $FileHandle;
+    }
+}
+
+
+
+=head1 NAME
+
+hl - terminal patterns highlighter
+
+=head1 SYNOPSIS
+
+hl [global-options] [highlight-options [patterns] ...] [- file1 [file2] ...]
+
+=head1 DESCRIPTION
+
+hl reads text from list of files or stdin and prints it on the console
+with specified patterns highlighted using terminal color escape sequences.
+Patterns are intrinsically perl-compatible regular expressions.
+
+Global options are processed internally by hl whereas highlight options
+are passed into Term::Highlight module, therefore they should not mix.
+The first occurence of an option which are not recognized as global is
+regarded as the beginning of highlight options.
+
+=head3 Global options:
+
+=over
+
+=item -g (-grep)
+
+prints only lines which match specified patterns.
+
+=item -r
+
+greps recursively, implies '-g'.
+If file list is empty starts search in current directory.
+
+=item -l
+
+prints the list of files where matches were found, implies '-g'.
+
+=item -b (-bin)
+
+enables processing of binary files (not enabled by default).
+
+=item -d (-debug)
+
+turns on debug support (colors printed out as symbolic sequences).
+
+=item -h (-help)
+
+prints this message and exit.
+
+=back
+
+=head3 Highligh options:
+
+=over
+
+=item -x[xx][.b]
+
+highlights following patterns with color defined by number x[xx].
+x[xx] is color id corresponding to terminal color escape sequence number
+and should range within [0..255]. I<b> is 0 or 1, .0 applies the color id
+to foreground, .1 - to background, .0 is default value and may be omitted.
+If your terminal does not support 256 colors valid color ids are [0..15].
+I<Note>: if your terminal is 256 colors capable better use [16..255] colors!
+To see how many colors your terminal supports use B<tput colors> command.
+
+=item -i
+
+sets ignorecase search.
+
+=item -ni
+
+unsets ignorecase search.
+
+=item -b
+
+sets bold font.
+
+=item -rfg
+
+resets foreground color to default value.
+
+=item -rb
+
+resets bold font to normal.
+
+=item -rbg
+
+resets background color to default value.
+
+=item -r
+
+resets both background color and bold font.
+
+=item -ra
+
+resets all settings to default values.
+
+=back
+
+=head3 Option '-'
+
+is used to separate list of files to process from global and highlight options.
+This is necessary option when reading from files due to the fact that hl can be fed
+with list of files or from stdin or pipe.
+
+Highlight options apply to following them regexp patterns if any.
+If trailing highlight options are not followed by patterns they apply to whole text.
+
+It is possible to define common highlight options on session level.
+hl supports environment variable B<HL_INITSTRING> which value will be prepended to
+any highlight options given in command line.
+
+=head1 ENVIRONMENT VARIABLES
+
+=over
+
+=item B<HL_INITSTRING>
+
+defines common highlight options which will be prepended to any highlight options
+given in command line. For example setting B<HL_INITSTRING>="-21 -i" will make hl
+highlight patterns with blue (color id 21) and ignore case of them without explicit
+definition of highlight options in command line.
+I<Note>: B<HL_INITSTRING> must not contain global options!
+
+=back
+
+=head1 EXAMPLES
+
+B<ls | hl -b -46.1 -21 '\bw.*?\b>
+
+reads output of B<ls> command and highlight words starting with I<w> with bold blue
+(color id 21) foreground and green (color id 46) background.
+
+=head1 SEE ALSO
+
+Term::Highlight(3), tput(1)
+
+=head1 AUTHOR
+
+Alexey Radkov <alexey.radkov@gmail.com> 
+
+=head1 COPYRIGHT AND LICENSE
+
+Copyright (C) 2008 by A. Radkov.
+
+This library is free software; you can redistribute it and/or modify
+it under the same terms as Perl itself, either Perl version 5.8.8 or,
+at your option, any later version of Perl 5 you may have available.
+
+=cut
