@@ -3,7 +3,7 @@
 use Term::Highlight;
 
 ( $PROGNAME = $0 ) =~ s/.*\///;
-$VERSION = "1.7";
+$VERSION = "1.7.1";
 $TAGTYPE = "term";
 $RC_FILE = "$ENV{ HOME }/.hlrc";
 $SNIPPET_PTN = qr/\s*snippet\s+(\S+)\s+(.*)/o;
@@ -120,6 +120,8 @@ sub LoadSnippets
 
 push @Hl_args, split '\s+', $ENV{ HL_INITSTRING } if exists
                                                         $ENV{ HL_INITSTRING };
+
+$TAGTYPE = "none" unless -t STDOUT;
 
 while ( my $arg = shift )
 {
@@ -403,7 +405,7 @@ B<snippet W       -130 (?:^|[\s])[A-Z]\S+>
 Lines that do not match the snippet line pattern are ignored. Arguments of
 highlight_options are naturally split by whitespaces. If you want to have
 whitespaces inside patterns you can use single quotes surrounding them. Single
-quote itself must be prepended by backslash. Too long lines cam be split into
+quote itself must be prepended by backslash. Too long lines can be split into
 multiple lines using backslash.
 
 =head1 SEE ALSO
